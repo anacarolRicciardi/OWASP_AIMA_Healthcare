@@ -1,0 +1,46 @@
+name: Feedback on AIMA Documentation
+description: Suggest a change, report a problem, or share real-world experience
+title: "[Feedback] <Short Summary Here>"
+labels: [feedback, needs-triage]
+body:
+  - type: dropdown
+    id: type
+    attributes:
+      label: Type of Feedback
+      options:
+        - Suggestion for improvement
+        - Problem or error
+        - Real-world usage experience
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: location
+    attributes:
+      label: Where in the documentation?
+      description: Please provide the Chapter Title and, if possible, the section heading or page number in the PDF.
+      placeholder: e.g. "Chapter 3 – Risk Management", section "Threat Modeling"
+    validations:
+      required: true
+
+  - type: textarea
+    id: details
+    attributes:
+      label: Your Feedback
+      description: Tell us what you noticed, suggest changes, or share your experience.
+      placeholder: |
+        - What did you find unclear or missing?
+        - How could it be improved?
+        - If this is a real-world experience, what worked or didn’t work?
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Optional - Additional Context
+      description: If relevant, include why this matters to you or how it affected your use of the documentation.
+      placeholder: I was using this during a workshop with X and found...
+    validations:
+      required: false
