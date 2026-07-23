@@ -19,7 +19,7 @@ def render_markdown(md_text: str) -> str:
         from markdown import markdown
     except ModuleNotFoundError as exc:
         raise SystemExit(
-            "Missing Python dependency: Markdown. Run `python -m pip install -r requirements.txt`."
+            "Missing Python dependency: Markdown. Run `python -m pip install -r requirements-scripts.txt`."
         ) from exc
 
     return markdown(md_text, extensions=['extra', 'nl2br', 'sane_lists', 'attr_list'])
@@ -29,7 +29,7 @@ def write_pdf(html: str, output_file: Path):
         from weasyprint import HTML
     except ModuleNotFoundError as exc:
         raise SystemExit(
-            "Missing Python dependency: weasyprint. Run `python -m pip install -r requirements.txt`."
+            "Missing Python dependency: weasyprint. Run `python -m pip install -r requirements-scripts.txt`."
         ) from exc
     except OSError as exc:
         raise SystemExit(WEASYPRINT_INSTALL_HELP) from exc

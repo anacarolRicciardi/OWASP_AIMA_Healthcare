@@ -11,6 +11,9 @@ import plotly.express as px
 from datetime import datetime
 import json
 import io
+import re
+import base64
+import requests
 
 # ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -90,6 +93,17 @@ T = {
         "in_progress": "Em progresso",
         "compliant": "Conforme",
         "non_compliant": "Não conforme",
+        "menu_auto": "🤖 Análise Automática",
+        "auto_header": "Análise Automática de Repositório (Beta)",
+        "auto_intro": "Cole a URL de um repositório **público** no GitHub. O app busca sinais visíveis no repositório (CI/CD, testes, SECURITY.md, model cards, menções a privacidade/viés/monitoramento) e **sugere** respostas para revisão manual — não é uma pontuação final. Domínios de governança e processo (comitês de ética, políticas internas) não podem ser verificados apenas pelo código. Sujeito ao limite de requisições da API pública do GitHub.",
+        "auto_url_label": "URL do repositório",
+        "auto_button": "🔎 Analisar repositório",
+        "auto_evidence_header": "Sinais encontrados",
+        "auto_no_evidence": "Nenhum sinal relevante foi encontrado neste repositório.",
+        "auto_apply_button": "✅ Aplicar sugestões à avaliação",
+        "auto_suggestions_ready": "sugestões prontas para aplicar (não sobrescrevem respostas já marcadas).",
+        "auto_applied_msg": "respostas pré-preenchidas. Revise-as na página Avaliação AIMA.",
+        "auto_invalid_url": "URL inválida. Use o formato https://github.com/owner/repo",
     },
     "en": {
         "app_title": "OWASP AIMA Healthcare",
@@ -122,6 +136,17 @@ T = {
         "in_progress": "In progress",
         "compliant": "Compliant",
         "non_compliant": "Non-compliant",
+        "menu_auto": "🤖 Automated Scan",
+        "auto_header": "Automated Repository Scan (Beta)",
+        "auto_intro": "Paste the URL of a **public** GitHub repository. The app looks for visible signals in the repo (CI/CD, tests, SECURITY.md, model cards, mentions of privacy/bias/monitoring) and **suggests** answers for manual review — this is not a final score. Governance/process domains (ethics committees, internal policies) cannot be verified from code alone. Subject to the public GitHub API rate limit.",
+        "auto_url_label": "Repository URL",
+        "auto_button": "🔎 Scan repository",
+        "auto_evidence_header": "Signals found",
+        "auto_no_evidence": "No relevant signals were found in this repository.",
+        "auto_apply_button": "✅ Apply suggestions to assessment",
+        "auto_suggestions_ready": "suggestions ready to apply (won't overwrite answers already checked).",
+        "auto_applied_msg": "answers pre-filled. Review them on the AIMA Assessment page.",
+        "auto_invalid_url": "Invalid URL. Use the format https://github.com/owner/repo",
     },
     "es": {
         "app_title": "OWASP AIMA Healthcare",
@@ -154,6 +179,17 @@ T = {
         "in_progress": "En progreso",
         "compliant": "Conforme",
         "non_compliant": "No conforme",
+        "menu_auto": "🤖 Análisis Automático",
+        "auto_header": "Análisis Automático de Repositorio (Beta)",
+        "auto_intro": "Pegue la URL de un repositorio **público** de GitHub. La app busca señales visibles en el repositorio (CI/CD, tests, SECURITY.md, model cards, menciones a privacidad/sesgo/monitoreo) y **sugiere** respuestas para revisión manual — no es una puntuación final. Los dominios de gobernanza y proceso (comités de ética, políticas internas) no pueden verificarse solo con el código. Sujeto al límite de solicitudes de la API pública de GitHub.",
+        "auto_url_label": "URL del repositorio",
+        "auto_button": "🔎 Analizar repositorio",
+        "auto_evidence_header": "Señales encontradas",
+        "auto_no_evidence": "No se encontraron señales relevantes en este repositorio.",
+        "auto_apply_button": "✅ Aplicar sugerencias a la evaluación",
+        "auto_suggestions_ready": "sugerencias listas para aplicar (no sobrescriben respuestas ya marcadas).",
+        "auto_applied_msg": "respuestas prellenadas. Revíselas en la página Evaluación AIMA.",
+        "auto_invalid_url": "URL inválida. Use el formato https://github.com/owner/repo",
     },
 }
 
@@ -1010,6 +1046,170 @@ def to_excel():
 
     return output.getvalue()
 
+# ── Automated repository scan (heuristic, read-only, best-effort) ──────────────
+# Only ever calls api.github.com, constructed from a regex-validated owner/repo -
+# never fetches a user-supplied URL directly, to avoid SSRF. No fetched content
+# is ever executed; it is only pattern-matched as text.
+GITHUB_URL_RE = re.compile(
+    r"^https?://github\.com/(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+?)(?:\.git)?/?$"
+)
+
+AUTO_SCAN_KEYWORDS = {
+    "kw_fairness": ["fairness", "bias", "fairlearn", "aif360", "viés", "equidade"],
+    "kw_privacy": ["gdpr", "lgpd", "privacy", "privacidade", "dpia"],
+    "kw_explainability": ["explainab", "interpretab", "shap", "lime", "transparên"],
+    "kw_monitoring": ["monitoring", "prometheus", "grafana", "sentry", "observability", "monitoramento"],
+    "kw_threat_model": ["threat model", "threat-model", "ameaça", "stride"],
+}
+
+AUTO_SCAN_RULES = [
+    ("Implementation", "Secure Build", "L1", "A", "security_scanning"),
+    ("Implementation", "Secure Build", "L1", "B", "has_tests"),
+    ("Implementation", "Secure Build", "L3", "B", "security_scanning"),
+    ("Implementation", "Secure Deployment", "L1", "A", "has_dockerfile"),
+    ("Implementation", "Secure Deployment", "L1", "B", "ci_workflows"),
+    ("Verification", "Security Testing", "L1", "A", "has_tests"),
+    ("Verification", "Security Testing", "L2", "A", "security_scanning"),
+    ("Verification", "Requirement-Based Testing", "L1", "B", "has_tests"),
+    ("Operations", "Incident Management", "L1", "A", "has_security_md"),
+    ("Operations", "Incident Management", "L1", "B", "has_security_md"),
+    ("Operations", "Event Management", "L1", "A", "kw_monitoring"),
+    ("Governance", "Policy & Compliance", "L1", "A", "kw_privacy"),
+    ("Governance", "Strategy & Metrics", "L1", "B", "ci_workflows"),
+    ("Privacy", "Privacy by Design", "L1", "A", "has_privacy_doc"),
+    ("Privacy", "Privacy by Design", "L1", "B", "kw_privacy"),
+    ("Responsible AI", "Transparency & Explainability", "L1", "A", "has_model_card"),
+    ("Responsible AI", "Transparency & Explainability", "L1", "B", "kw_explainability"),
+    ("Responsible AI", "Fairness & Bias", "L1", "A", "kw_fairness"),
+    ("Design", "Threat Assessment", "L1", "A", "kw_threat_model"),
+]
+
+
+def _parse_github_url(url):
+    match = GITHUB_URL_RE.match(url.strip()) if url else None
+    if not match:
+        return None
+    return match.group("owner"), match.group("repo")
+
+
+def _gh_get(url, token):
+    headers = {"Accept": "application/vnd.github+json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return requests.get(url, headers=headers, timeout=10)
+
+
+def scan_github_repo(owner, repo, token=None):
+    """Best-effort, read-only scan of a public GitHub repo for AIMA-relevant signals.
+    Returns (signals: dict, evidence: list[str], error: str | None).
+    """
+    base = f"https://api.github.com/repos/{owner}/{repo}"
+    try:
+        info = _gh_get(base, token)
+    except requests.exceptions.RequestException:
+        return {}, [], "Não foi possível conectar ao GitHub. Tente novamente mais tarde."
+
+    if info.status_code == 404:
+        return {}, [], "Repositório não encontrado (verifique se é público e a URL está correta)."
+    if info.status_code == 403:
+        return {}, [], "Limite de requisições da API do GitHub atingido. Tente novamente em alguns minutos."
+    if info.status_code != 200:
+        return {}, [], f"Erro ao acessar o repositório (HTTP {info.status_code})."
+
+    info_json = info.json()
+    if info_json.get("private"):
+        return {}, [], "Repositórios privados não são suportados por esta análise."
+
+    default_branch = info_json.get("default_branch", "main")
+
+    try:
+        tree = _gh_get(f"{base}/git/trees/{default_branch}?recursive=1", token)
+    except requests.exceptions.RequestException:
+        return {}, [], "Não foi possível ler os arquivos do repositório."
+
+    if tree.status_code != 200:
+        return {}, [], f"Erro ao listar arquivos do repositório (HTTP {tree.status_code})."
+
+    paths = [
+        item["path"].lower()
+        for item in tree.json().get("tree", [])[:5000]
+        if item.get("type") == "blob"
+    ]
+
+    def has(*needles):
+        return any(any(n in p for n in needles) for p in paths)
+
+    signals = {}
+    evidence = []
+
+    checks = [
+        ("ci_workflows", (".github/workflows/",), "CI/CD detectado (.github/workflows/)"),
+        ("security_scanning", ("codeql", "bandit", "snyk", "trivy", "semgrep", "dependabot"),
+         "Scanner de segurança de código detectado (CodeQL/Bandit/Snyk/etc.)"),
+        ("has_tests", ("tests/", "test_", "_test.py"), "Diretório/arquivos de teste automatizado detectados"),
+        ("has_security_md", ("security.md",), "SECURITY.md presente (processo de reporte de vulnerabilidades)"),
+        ("has_dockerfile", ("dockerfile",), "Dockerfile presente (deployment padronizado)"),
+        ("has_model_card", ("model_card", "model-card", "datasheet"), "Model card / datasheet presente (transparência do modelo)"),
+        ("has_privacy_doc", ("privacy.md", "dpia"), "Documentação de privacidade presente"),
+    ]
+    for key, needles, label in checks:
+        if has(*needles):
+            signals[key] = True
+            evidence.append(label)
+
+    # Keyword search in README / SECURITY.md content (best-effort, capped)
+    for fname in ("readme.md", "security.md"):
+        matches = [p for p in paths if p == fname or p.endswith("/" + fname)]
+        if not matches:
+            continue
+        try:
+            content_resp = _gh_get(f"{base}/contents/{matches[0]}", token)
+        except requests.exceptions.RequestException:
+            continue
+        if content_resp.status_code != 200:
+            continue
+        data = content_resp.json()
+        if data.get("encoding") != "base64":
+            continue
+        try:
+            text = base64.b64decode(data["content"]).decode("utf-8", errors="ignore")[:20000].lower()
+        except (ValueError, TypeError):
+            continue
+
+        for key, needles in AUTO_SCAN_KEYWORDS.items():
+            if signals.get(key):
+                continue
+            if any(kw in text for kw in needles):
+                signals[key] = True
+                evidence.append(f"Menção a \"{key.replace('kw_', '')}\" encontrada em {matches[0].upper()}")
+
+    return signals, evidence, None
+
+
+def map_signals_to_scores(signals):
+    suggestions = {}
+    applied_rules = []
+    for domain, practice, level, stream, sig_key in AUTO_SCAN_RULES:
+        if signals.get(sig_key):
+            suggestions.setdefault(domain, {}).setdefault(practice, {}).setdefault(level, {})[stream] = True
+            applied_rules.append((domain, practice, level, stream))
+    return suggestions, applied_rules
+
+
+def apply_auto_suggestions(suggestions):
+    count = 0
+    for domain, practices in suggestions.items():
+        st.session_state.scores.setdefault(domain, {})
+        for practice, levels in practices.items():
+            st.session_state.scores[domain].setdefault(practice, {})
+            for level, streams in levels.items():
+                st.session_state.scores[domain][practice].setdefault(level, {})
+                for stream, value in streams.items():
+                    if value and not st.session_state.scores[domain][practice][level].get(stream):
+                        st.session_state.scores[domain][practice][level][stream] = True
+                        count += 1
+    return count
+
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.image("https://owasp.org/assets/images/logo.png", width=120)
@@ -1024,7 +1224,7 @@ with st.sidebar:
     st.divider()
 
     page = st.radio("Navegação", [
-        t("menu_home"), t("menu_assess"), t("menu_compliance"),
+        t("menu_home"), t("menu_assess"), t("menu_auto"), t("menu_compliance"),
         t("menu_reports"), t("menu_settings")
     ])
 
@@ -1137,6 +1337,50 @@ elif page == t("menu_assess"):
                             st.session_state.scores[domain_name][practice_name][level_key]["B"] = ans_b
 
                         st.divider()
+
+# ── AUTOMATED SCAN PAGE ────────────────────────────────────────────────────────
+elif page == t("menu_auto"):
+    st.markdown(f"# {t('menu_auto')}")
+    st.info(t("auto_intro"))
+
+    repo_url = st.text_input(t("auto_url_label"), placeholder="https://github.com/owner/repo")
+
+    if st.button(t("auto_button")):
+        parsed = _parse_github_url(repo_url)
+        if not parsed:
+            st.error(t("auto_invalid_url"))
+            st.session_state.pop("auto_scan_evidence", None)
+        else:
+            owner, repo_name = parsed
+            try:
+                token = st.secrets.get("github_token", None)
+            except Exception:
+                token = None
+            with st.spinner("..."):
+                signals, evidence, error = scan_github_repo(owner, repo_name, token)
+            if error:
+                st.error(error)
+                st.session_state.pop("auto_scan_evidence", None)
+            else:
+                st.session_state["auto_scan_signals"] = signals
+                st.session_state["auto_scan_evidence"] = evidence
+
+    if st.session_state.get("auto_scan_evidence") is not None:
+        st.divider()
+        st.markdown(f"### {t('auto_evidence_header')}")
+        evidence = st.session_state["auto_scan_evidence"]
+        if evidence:
+            for item in evidence:
+                st.markdown(f"- {item}")
+        else:
+            st.warning(t("auto_no_evidence"))
+
+        suggestions, applied_rules = map_signals_to_scores(st.session_state.get("auto_scan_signals", {}))
+        if applied_rules:
+            st.caption(f"{len(applied_rules)} {t('auto_suggestions_ready')}")
+            if st.button(t("auto_apply_button")):
+                count = apply_auto_suggestions(suggestions)
+                st.success(f"{count} {t('auto_applied_msg')}")
 
 # ── COMPLIANCE PAGE ────────────────────────────────────────────────────────────
 elif page == t("menu_compliance"):

@@ -3,3 +3,26 @@
 /favicon.ico
 _site/
 /.idea
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Secrets - never commit credentials
+.env
+.env.*
+.streamlit/secrets.toml
+
+# Node / Expo (mobile-app/)
+node_modules/
+.expo/
+dist/
+web-build/
+
+# Editor/OS
+.vscode/
+.DS_Store
+Thumbs.db

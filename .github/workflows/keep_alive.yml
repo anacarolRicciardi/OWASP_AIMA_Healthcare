@@ -1,0 +1,13 @@
+name: Keep Streamlit App Awake
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping the public app to prevent Streamlit Community Cloud sleep
+        run: curl -fsS --max-time 30 https://owasp-aima-healthcare.streamlit.app/ -o /dev/null || true

@@ -10,10 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@master
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@master
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
@@ -21,14 +21,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libpango-1.0-0 libpangocairo-1.0-0 libcairo2 libgdk-pixbuf2.0-0 libffi-dev
-          pip install markdown weasyprint
+          pip install -r requirements-scripts.txt
 
       - name: Generate PDF
         run: python ./scripts/generate_pdf_preview.py source/latest ./combined_draft_latest.pdf
         working-directory: ${{ github.workspace }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@master
+        uses: actions/upload-artifact@v4
         with:
           name: Draft-PDF
           path: combined_draft_latest.pdf

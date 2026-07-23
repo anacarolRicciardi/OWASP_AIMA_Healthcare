@@ -7,7 +7,12 @@ font = "sans serif"
 
 [server]
 headless = true
-port = 8503
+maxUploadSize = 5
 
 [browser]
 gatherUsageStats = false
+
+[client]
+# Public deployment: don't leak Python tracebacks/internals to end users.
+showErrorDetails = "none"
+toolbarMode = "minimal"
